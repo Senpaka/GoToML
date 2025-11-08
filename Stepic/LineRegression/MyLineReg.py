@@ -7,12 +7,38 @@ X, y = data['data'], data['target']
 
 
 class MyLineReg:
+    """
+    Линейная регрессия
+
+    Параметры:
+    n_iter : int
+        Кол-во итерация для градиентного спуска
+    learning_rate : float
+        Скорость обучения
+    metric : str
+        Метрика для оценки качества модели ["mse", "mae", "rmse", "r2", "mape"]
+    reg : str
+        Тип регуляризации ["l1", "l2", "elasticnet"]
+    l1_coef : float
+        Коеффициент L1-региляризации
+    l2_coef : float
+        Коеффициент L2-региляризации
+
+    Атрибуты:
+    weight : np.array
+        Вектор весов модели, включая bias
+    last_metric : float
+        Последнее значение выбранной метрики (без учета регуляризации)
+    last_loss : float
+        Последнее значение loss (с учетем регуляризации)
+    """
+
     def __init__(self, n_iter=100, learning_rate=0.1, metric=None, reg=None, l1_coef=0., l2_coef=0.):
         self.n_iter = n_iter
         self.learning_rate = learning_rate
         self.weight = None
         self.metric = metric
-        self.last_metric_value = None
+        self.last_metric = None
         self.last_loss = None
         self.reg = reg
         self.l1_coef = l1_coef
@@ -78,6 +104,23 @@ class MyLineReg:
         return grad, loss
 
     def fit(self, X: pd.DataFrame, y: pd.Series, verbose=0):
+        """
+        Обучение модели с помощью градиентного спуска
+
+        Параметры:
+        X : pd.DataFrame
+            Признаки (фичи, features)
+        y : pd.Series
+            Целевая переменная
+        verbose : int
+            Каждое verbose-е значение показывает лог
+
+        Поведение:
+        Вычисляет loss, если указана то с регуляризацией
+        Считает градиент и обновляет веса
+        Сохраняет last_metric и last_loss
+        """
+
         X_copy = X.copy()
         X_copy.insert(0, "once", 1)
         self.weight = np.ones(X_copy.shape[1])
@@ -90,25 +133,24 @@ class MyLineReg:
             Y = X_matrix @ self.weight
             diff = Y - Y_vector
             loss = (diff ** 2).mean()
-            self.last_loss = loss
 
             loss_grad = 2 / n_samples * (X_matrix.T @ diff)
             grad, loss = self.apply_reg(loss_grad, loss)
-            #grad = getattr(self, "_" + self.reg)(self.weight, loss_grad, self.l1_coef, self.l2_coef)
+            self.last_loss = loss
 
             self.weight = self.weight - self.learning_rate * grad
 
             if self.metric is None:
-                self.last_metric_value = getattr(self, "_mse")(y, X_matrix @ self.weight)
+                self.last_metric = getattr(self, "_mse")(y, X_matrix @ self.weight)
             else:
-                self.last_metric_value = getattr(self, "_" + self.metric)(y,
-                                                                          X_matrix @ self.weight)
+                self.last_metric = getattr(self, "_" + self.metric)(y,
+                                                                    X_matrix @ self.weight)
 
             if verbose and i % verbose == 0:
                 if self.metric is None:
                     self.log(i, loss)
                 else:
-                    self.log(i, loss, self.last_metric_value)
+                    self.log(i, loss, self.last_metric)
 
     def predict(self, X: pd.DataFrame):
         X = X.copy()
@@ -120,12 +162,29 @@ class MyLineReg:
         return self.weight[1:]
 
     def get_last_metric(self):
-        return self.last_metric_value
+        return self.last_metric
 
     def get_last_loss(self):
         return self.last_loss
 
     def apply_reg(self, loss_grad, loss):
+        """
+        Применяе регуляризацию к градиенту и loss
+
+        Параметры:
+        loss_grad : np.array
+            Вектор градиент без регуляризации
+        loss : float
+            Текущий loss без регуляризации
+
+        Возврящает:
+        grad : np.array
+            Вектор градиент с регуляризацией
+        loss : float
+            Текущий loss с регуляризацией
+        :return:
+        """
+
         if self.reg in ["l1", "l2", "elasticnet"]:
             func = getattr(self, f"_{self.reg}")
             if self.reg == "l1":
