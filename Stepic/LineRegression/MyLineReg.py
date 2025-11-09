@@ -21,13 +21,13 @@ class MyLineReg:
     reg : str
         Тип регуляризации ["l1", "l2", "elasticnet"]
     l1_coef : float
-        Коеффициент L1-региляризации
+        Коэффициент L1-регуляризации
     l2_coef : float
-        Коеффициент L2-региляризации
+        Коэффициент L2-регуляризации
     sgd_sample : float, int
         Rол-во образцов, которое будет использоваться на каждой итерации обучения. Может принимать либо целые числа, либо дробные от 0.0 до 1.0.
     random_state : int
-        для воспроизводимости результата фиксируется сид
+        Сид для многократноой выборки одинаковых наборов батчей
 
     Атрибуты:
     weight : np.array
@@ -35,10 +35,11 @@ class MyLineReg:
     last_metric : float
         Последнее значение выбранной метрики (без учета регуляризации)
     last_loss : float
-        Последнее значение loss (с учетем регуляризации)
+        Последнее значение loss (с учетом регуляризации)
     """
 
-    def __init__(self, n_iter=100, learning_rate=0.1, metric=None, reg=None, l1_coef=0., l2_coef=0., sgd_sample=None, random_state=42):
+    def __init__(self, n_iter=100, learning_rate=0.1, metric=None, reg=None, l1_coef=0., l2_coef=0., sgd_sample=None,
+                 random_state=42):
         self.n_iter = n_iter
         self.learning_rate = learning_rate
         self.weight = None
@@ -48,85 +49,95 @@ class MyLineReg:
         self.reg = reg
         self.l1_coef = l1_coef
         self.l2_coef = l2_coef
-        self.sdf_sample = sgd_sample
+        self.sgd_sample = sgd_sample
         self.random_state = random_state
 
     def __str__(self):
         return format(f"MyLineReg class: n_iter={self.n_iter}, learning_rate={self.learning_rate}")
 
-    # Расчет метрик
+    # ------------------------Метрики------------------------#
     @staticmethod
-    def _mse(y_true: np.array, y_pred: np.array):
+    def _mse(y_true: np.ndarray, y_pred: np.ndarray):
         diff = y_pred - y_true
 
         return np.mean(diff ** 2)
 
     @staticmethod
-    def _mae(y_true: np.array, y_pred: np.array):
-        diff = y_pred - y_true
-
-        return np.mean(np.abs(diff))
+    def _mae(y_true: np.ndarray, y_pred: np.ndarray):
+        return np.mean(np.abs(y_pred - y_true))
 
     @staticmethod
-    def _rmse(y_true: np.array, y_pred: np.array):
-        diff = y_pred - y_true
-
-        return np.sqrt(np.mean(diff ** 2))
+    def _rmse(y_true: np.ndarray, y_pred: np.ndarray):
+        return np.sqrt(np.mean((y_pred - y_true) ** 2))
 
     @staticmethod
-    def _r2(y_true: np.array, y_pred: np.array):
-        diff = y_pred - y_true
-        ss_res = np.sum(diff ** 2)
+    def _r2(y_true: np.ndarray, y_pred: np.ndarray):
+        ss_res = np.sum((y_pred - y_true) ** 2)
         ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
-        coef_det = 1 - ss_res / ss_tot
-
-        return coef_det
+        return 1 - ss_res / ss_tot
 
     @staticmethod
-    def _mape(y_true: np.array, y_pred: np.array):
+    def _mape(y_true: np.ndarray, y_pred: np.ndarray):
         diff = y_pred - y_true
         mape_loss = 100 * np.mean(np.abs(diff / np.where(y_true == 0, 1e-10, y_true)))
 
         return mape_loss
 
-    # Методы регуляризации
-
+    # ------------------------Регуляризация------------------------#
     @staticmethod
     def _l1(weight, loss_grad, loss, l1_coef):
-        grad = loss_grad + l1_coef * np.sign(weight)
-        loss = loss + l1_coef * np.sum(np.abs(weight))
+        grad = loss_grad.copy()
+        grad[1:] += l1_coef * np.sign(weight[1:])
+        loss += l1_coef * np.sum(np.abs(weight[1:]))
         return grad, loss
 
     @staticmethod
     def _l2(weight, loss_grad, loss, l2_coef):
-        grad = loss_grad + l2_coef * 2 * weight
-        loss = loss + l2_coef * np.sum(weight ** 2)
+        grad = loss_grad.copy()
+        grad[1:] += l2_coef * 2 * weight[1:]
+        loss += l2_coef * np.sum(weight[1:] ** 2)
         return grad, loss
 
     @staticmethod
     def _elasticnet(weight, loss_grad, loss, l1_coef, l2_coef):
-        grad = loss_grad + l1_coef * np.sign(weight) + l2_coef * 2 * weight
-        loss = loss + l1_coef * np.sum(np.abs(weight)) + l2_coef * np.sum(weight ** 2)
+        grad = loss_grad.copy()
+        grad[1:] += l1_coef * np.sign(weight[1:]) + l2_coef * 2 * weight[1:]
+        loss += l1_coef * np.sum(np.abs(weight[1:])) + l2_coef * np.sum(weight[1:] ** 2)
         return grad, loss
 
+    # ------------------------Батчи------------------------#
     @staticmethod
-    def _get_batch(X : pd.DataFrame, y : pd.Series, sdf_sample):
-        if sdf_sample is None:
+    def _get_batch(X: pd.DataFrame, y: pd.Series, sgd_sample) -> tuple[np.ndarray, np.ndarray]:
+        if sgd_sample is None:
             return X.values, y.values
         else:
-            if type(sdf_sample) is float:
-                sdf_sample = int(sdf_sample * X.shape[0])
+            if type(sgd_sample) is float:
+                sgd_sample = int(sgd_sample * X.shape[0])
 
-            sample_row_index = random.sample(range(X.shape[0]), sdf_sample)
+            sample_row_index = random.sample(range(X.shape[0]), sgd_sample)
             X_matrix = X.iloc[sample_row_index].values
             Y_vector = y.iloc[sample_row_index].values
             return X_matrix, Y_vector
 
+    # ------------------------Обновление весов------------------------#
+    def _update_weight(self, X_batch: np.ndarray, y_batch: np.ndarray, batch_size: int, i: int) -> float:
+        Y_pred_batch = X_batch @ self.weight
+        diff = Y_pred_batch - y_batch
+        loss = (diff ** 2).mean()
+        loss_grad = 2 / batch_size * (X_batch.T @ diff)
+        grad, loss = self.apply_reg(loss_grad, loss)
 
+        lr = self.learning_rate(i) if callable(self.learning_rate) else self.learning_rate
+        self.weight -= lr * grad
+
+        return loss
+
+    # ------------------------Обучение------------------------#
     def fit(self, X: pd.DataFrame, y: pd.Series, verbose=0):
         """
         Обучение модели с помощью градиентного спуска
+
 
         Параметры:
         X : pd.DataFrame
@@ -137,9 +148,10 @@ class MyLineReg:
             Каждое verbose-е значение показывает лог
 
         Поведение:
-        Вычисляет loss, если указана то с регуляризацией
+        Обучение будет происходить на случайных мини батчах, если указан sgd_sample
+        Вычисляет loss, если указана то с регуляризацией,
         Считает градиент и обновляет веса
-        Сохраняет last_metric и last_loss
+        Сохраняет last_metric и last_loss (На полном наборе данных)
         """
 
         random.seed(self.random_state)
@@ -153,17 +165,11 @@ class MyLineReg:
 
         for i in range(1, self.n_iter + 1):
 
-            X_batch, y_batch = self._get_batch(X_copy, y, self.sdf_sample)
-            n_samples = X_batch.shape[0]
+            X_batch, y_batch = self._get_batch(X_copy, y, self.sgd_sample)
+            batch_size = X_batch.shape[0]
 
-            Y = X_batch @ self.weight
-            diff = Y - y_batch
-            loss = (diff ** 2).mean()
-            loss_grad = 2 / n_samples * (X_batch.T @ diff)
-            grad, loss = self.apply_reg(loss_grad, loss)
-
+            loss = self._update_weight(X_batch, y_batch, batch_size, i)
             self.last_loss = (((X_matrix @ self.weight) - Y_vector) ** 2).mean()
-            self.weight = self.weight - (self.learning_rate(i) if callable(self.learning_rate) else self.learning_rate) * grad
 
             if self.metric is None:
                 self.last_metric = getattr(self, "_mse")(y, X_matrix @ self.weight)
@@ -177,12 +183,14 @@ class MyLineReg:
                 else:
                     self.log(i, loss, self.last_metric)
 
+    # ------------------------Предсказание------------------------#
     def predict(self, X: pd.DataFrame):
         X = X.copy()
         X.insert(0, "once", 1)
 
         return X @ self.weight  # Для задания здесь была сумма
 
+    # ------------------------Методы доступа------------------------#
     def get_coef(self):
         return self.weight[1:]
 
@@ -192,9 +200,11 @@ class MyLineReg:
     def get_last_loss(self):
         return self.last_loss
 
-    def apply_reg(self, loss_grad, loss):
+    # ------------------------Применение регуляризации------------------------#
+    def apply_reg(self, loss_grad, loss) -> tuple[np.ndarray, float]:
         """
-        Применяе регуляризацию к градиенту и loss
+        Применяе регуляризацию к градиенту и loss,
+        если регуляризация не указана, то возвращает исходные градиент и loss
 
         Параметры:
         loss_grad : np.array
@@ -207,12 +217,12 @@ class MyLineReg:
             Вектор градиент с регуляризацией
         loss : float
             Текущий loss с регуляризацией
-        :return:
         """
 
         if self.reg in ["l1", "l2", "elasticnet"]:
             func = getattr(self, f"_{self.reg}")
             if self.reg == "l1":
+
                 return func(self.weight, loss_grad, loss, self.l1_coef)
             elif self.reg == "l2":
                 return func(self.weight, loss_grad, loss, self.l2_coef)
@@ -220,6 +230,7 @@ class MyLineReg:
                 return func(self.weight, loss_grad, loss, self.l1_coef, self.l2_coef)
         return loss_grad, loss
 
+    # ------------------------Логи------------------------#
     def log(self, n: int, loss: float, metric_value=0):
         if self.metric is None:
             print(f"{n} | loss: {loss}")
@@ -227,8 +238,8 @@ class MyLineReg:
             print(f"{n} | loss: {loss} | {self.metric}: {metric_value}")
 
 
-linReg = MyLineReg(10000, 0.1)
-linReg.fit(X, y)
+linReg = MyLineReg(10000, 0.1, "mse", "elasticnet", l1_coef=0.1, l2_coef=0.1, sgd_sample=40, random_state=123)
+linReg.fit(X, y, 100)
 print(linReg.get_coef())
 print(linReg.predict(X))
 print(y.values)
