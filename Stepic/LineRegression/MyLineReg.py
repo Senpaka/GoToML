@@ -1,11 +1,6 @@
-from sklearn.datasets import load_diabetes
 import pandas as pd
 import numpy as np
 import random
-
-data = load_diabetes(as_frame=True)
-X, y = data['data'], data['target']
-
 
 class MyLineReg:
     """
@@ -236,12 +231,3 @@ class MyLineReg:
             print(f"{n} | loss: {loss}")
         else:
             print(f"{n} | loss: {loss} | {self.metric}: {metric_value}")
-
-
-linReg = MyLineReg(10000, 0.1, "mse", "elasticnet", l1_coef=0.1, l2_coef=0.1, sgd_sample=40, random_state=123)
-linReg.fit(X, y, 100)
-print(linReg.get_coef())
-print(linReg.predict(X))
-print(y.values)
-print(linReg.get_last_metric())
-print(linReg.get_last_loss())
