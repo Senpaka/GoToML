@@ -183,7 +183,7 @@ class MyLineReg:
         X = X.copy()
         X.insert(0, "once", 1)
 
-        return X @ self.weight  # Для задания здесь была сумма
+        return X @ self.weight
 
     # ------------------------Методы доступа------------------------#
     def get_coef(self):
