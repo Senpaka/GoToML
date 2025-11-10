@@ -121,18 +121,47 @@ class MyLineReg:
         diff = Y_pred_batch - y_batch
         loss = (diff ** 2).mean()
         loss_grad = 2 / batch_size * (X_batch.T @ diff)
-        grad, loss = self.apply_reg(loss_grad, loss)
+        grad, loss = self._apply_reg(loss_grad, loss)
 
         lr = self.learning_rate(i) if callable(self.learning_rate) else self.learning_rate
         self.weight -= lr * grad
 
         return loss
 
+    # ------------------------Применение регуляризации------------------------#
+    def _apply_reg(self, loss_grad, loss) -> tuple[np.ndarray, float]:
+        """
+        Применяе регуляризацию к градиенту и loss,
+        если регуляризация не указана, то возвращает исходные градиент и loss
+
+        Параметры:
+        loss_grad : np.array
+            Вектор градиент без регуляризации
+        loss : float
+            Текущий loss без регуляризации
+
+        Возврящает:
+        grad : np.array
+            Вектор градиент с регуляризацией
+        loss : float
+            Текущий loss с регуляризацией
+        """
+
+        if self.reg in ["l1", "l2", "elasticnet"]:
+            func = getattr(self, f"_{self.reg}")
+            if self.reg == "l1":
+
+                return func(self.weight, loss_grad, loss, self.l1_coef)
+            elif self.reg == "l2":
+                return func(self.weight, loss_grad, loss, self.l2_coef)
+            else:
+                return func(self.weight, loss_grad, loss, self.l1_coef, self.l2_coef)
+        return loss_grad, loss
+
     # ------------------------Обучение------------------------#
     def fit(self, X: pd.DataFrame, y: pd.Series, verbose=0):
         """
         Обучение модели с помощью градиентного спуска
-
 
         Параметры:
         X : pd.DataFrame
@@ -144,7 +173,7 @@ class MyLineReg:
 
         Поведение:
         Обучение будет происходить на случайных мини батчах, если указан sgd_sample
-        Вычисляет loss, если указана то с регуляризацией,
+        Вычисляет loss, если указаны reg и нужные коэффициенты то с регуляризацией,
         Считает градиент и обновляет веса
         Сохраняет last_metric и last_loss (На полном наборе данных)
         """
@@ -179,51 +208,21 @@ class MyLineReg:
                     self.log(i, loss, self.last_metric)
 
     # ------------------------Предсказание------------------------#
-    def predict(self, X: pd.DataFrame):
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
         X = X.copy()
         X.insert(0, "once", 1)
 
         return X @ self.weight
 
     # ------------------------Методы доступа------------------------#
-    def get_coef(self):
+    def get_coef(self) -> np.ndarray:
         return self.weight[1:]
 
-    def get_last_metric(self):
+    def get_last_metric(self) -> float:
         return self.last_metric
 
-    def get_last_loss(self):
+    def get_last_loss(self) -> float:
         return self.last_loss
-
-    # ------------------------Применение регуляризации------------------------#
-    def apply_reg(self, loss_grad, loss) -> tuple[np.ndarray, float]:
-        """
-        Применяе регуляризацию к градиенту и loss,
-        если регуляризация не указана, то возвращает исходные градиент и loss
-
-        Параметры:
-        loss_grad : np.array
-            Вектор градиент без регуляризации
-        loss : float
-            Текущий loss без регуляризации
-
-        Возврящает:
-        grad : np.array
-            Вектор градиент с регуляризацией
-        loss : float
-            Текущий loss с регуляризацией
-        """
-
-        if self.reg in ["l1", "l2", "elasticnet"]:
-            func = getattr(self, f"_{self.reg}")
-            if self.reg == "l1":
-
-                return func(self.weight, loss_grad, loss, self.l1_coef)
-            elif self.reg == "l2":
-                return func(self.weight, loss_grad, loss, self.l2_coef)
-            else:
-                return func(self.weight, loss_grad, loss, self.l1_coef, self.l2_coef)
-        return loss_grad, loss
 
     # ------------------------Логи------------------------#
     def log(self, n: int, loss: float, metric_value=0):
