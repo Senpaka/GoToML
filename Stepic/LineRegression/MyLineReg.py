@@ -30,7 +30,7 @@ class MyLineReg:
     last_metric : float
         Последнее значение выбранной метрики (без учета регуляризации)
     last_loss : float
-        Последнее значение loss (с учетом регуляризации)
+        Последнее значение loss (без учетом регуляризации)
     """
 
     def __init__(self, n_iter=100, learning_rate=0.1, metric=None, reg=None, l1_coef=0., l2_coef=0., sgd_sample=None,
