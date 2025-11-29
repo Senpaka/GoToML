@@ -8,10 +8,27 @@ class MyLogReg:
     Параметры:
     n_iter: int
         Кол-во итераций для обучения модели
+        По умолчанию равен 10
     learning_rate: float
         Скорость обучения модели
+        (Может быть передано как float так и функция)
+        По умолчанию равен 0.1
     metric : str
         Выбранная метрика оценки (accuracy, precision, recall, f1, roc_auc)
+        По умолчанию равен None
+    reg : str
+        Выбранная регуляризация
+        По умолчанию равен None
+    l1_coef : float
+        Коэффициент l1 регуляризации
+        По умолчанию равен None
+    l2_coef : float
+        Коэффициент l2 регуляризации
+        По умолчанию равен None
+    sgd_sample : int, float
+        Кол-во образцов используемых в каждой итерации обучения
+        При int берется это кол-во образцов
+        При float (от 0 до 1) берется указанный процент
 
     Атрибуты:
     weights : np.array
@@ -20,21 +37,27 @@ class MyLogReg:
         Последний результат подсчета метрики
     """
 
-    def __init__(self, n_iter=10, learning_rate=0.1, metric=None, reg=None, l1_coef=None, l2_coef=None):
+    def __init__(self, n_iter=10, learning_rate=0.1, metric=None, reg=None, l1_coef=None, l2_coef=None, sgd_sample=None, random_state=42):
         self.n_iter = n_iter
         self.learning_rate = learning_rate
-        self.weights = None
         self.metric = metric
-        self.last_metric = None
         self.reg = reg
         self.l1_coef = l1_coef
         self.l2_coef = l2_coef
+        self.random_state = random_state
+        self.sgd_sample = sgd_sample
+
+        self.log_loss = None
+        self.weights = None
+        self.last_metric = None
+
+
 
     def __str__(self) -> str:
         return f"MyLogReg class: n_iter={self.n_iter}, learning_rate={self.learning_rate}"
 
     # --------------------Обновление весов--------------------#
-    def __update_weights(self, X_matrix: np.ndarray, y_vector: np.ndarray, y_prediction: np.ndarray) -> None:
+    def _update_weights(self, X_matrix: np.ndarray, y_vector: np.ndarray, y_prediction: np.ndarray, current_iter: int) -> None:
         """
         Метод обновления весов
 
@@ -43,18 +66,20 @@ class MyLogReg:
             Матрица признаков X
         y_vector: np.array
             Вектор целевых переменных
+        y_prediction: np.array
+            Вектор предсказанных переменных
+        current_iter: int
+            Текущий шаг обучения
 
-        Считает предсказанные переменные (y_prediction)
-        Находит логистическую функцию потерь
-        С учетом небольшого прибавления exp (для исключения случаев log(0))
         Ищет градиент и учитывает регуляризацию
-        (При указании (reg, l1_coef, l2_coef))
-        Находит веса
+        (При указании [reg, l1_coef, l2_coef])
+        Обновляет веса
         """
 
         grad = 1 / y_vector.shape[0] * np.dot((y_prediction - y_vector), X_matrix)
-        grad_reg = self.__calculate_gradient_regularization()
-        self.weights -= self.learning_rate * (grad + grad_reg)
+        grad_reg = self._calculate_gradient_regularization()
+        lr = self.learning_rate(current_iter) if callable(self.learning_rate) else self.learning_rate
+        self.weights -= lr * (grad + grad_reg)
 
     # --------------------Подсчет предсказаний--------------------#
     @staticmethod
@@ -85,7 +110,7 @@ class MyLogReg:
         return y_predict
 
     # --------------------Применение регуляризации--------------------#
-    def __calculate_gradient_regularization(self) -> np.ndarray:
+    def _calculate_gradient_regularization(self) -> np.ndarray:
         """
         Применение регуляризации
 
@@ -97,19 +122,25 @@ class MyLogReg:
         Если передан то применяет указанную
         """
         if self.reg == "l1" and self.l1_coef is not None:
-            return self.__l1_regularization(self.weights, self.l1_coef)
+            return self._l1_regularization(self.weights, self.l1_coef)
         elif self.reg == "l2" and self.l2_coef is not None:
-            return self.__l2_regularization(self.weights, self.l2_coef)
+            return self._l2_regularization(self.weights, self.l2_coef)
         elif (self.reg == "elasticnet"
               and self.l1_coef is not None
               and self.l2_coef is not None):
-            return self.__elasticnet_regularization(self.weights, self.l1_coef, self.l2_coef)
+            return self._elasticnet_regularization(self.weights, self.l1_coef, self.l2_coef)
         else:
-            return np.zeros(1)
+            return np.zeros_like(self.weights)
 
+    @staticmethod
+    def _log_loss(y_prediction_proba: np.ndarray, y_batch: np.ndarray, exp: float) -> float:
+        log_loss = float(-np.mean(y_batch * np.log(y_prediction_proba + exp) +
+                 (1 - y_batch) * np.log(1 - y_prediction_proba + exp)))
+
+        return log_loss
     # --------------------Подсчет регуляризаций--------------------#
     @staticmethod
-    def __l1_regularization(weights: np.ndarray, l1_coef: float) -> np.ndarray:
+    def _l1_regularization(weights: np.ndarray, l1_coef: float) -> np.ndarray:
         """
         Подсчитывает l1 регуляризацию
 
@@ -123,10 +154,12 @@ class MyLogReg:
         np.ndarray
             Градиент l1 регуляризации
         """
-        return l1_coef * np.sign(weights)
+        reg = np.zeros_like(weights)
+        reg[1:] = l1_coef * np.sign(weights[1:])
+        return reg
 
     @staticmethod
-    def __l2_regularization(weights: np.ndarray, l2_coef: float) -> np.ndarray:
+    def _l2_regularization(weights: np.ndarray, l2_coef: float) -> np.ndarray:
         """
         Подсчитывает l1 регуляризацию
 
@@ -140,10 +173,12 @@ class MyLogReg:
         np.ndarray
             Градиент l1 регуляризации
         """
-        return l2_coef * 2 * weights
+        reg = np.zeros_like(weights)
+        reg[1:] = l2_coef * 2 * weights[1:]
+        return reg
 
     @staticmethod
-    def __elasticnet_regularization(weights: np.ndarray, l1_coef: float, l2_coef: float) -> np.ndarray:
+    def _elasticnet_regularization(weights: np.ndarray, l1_coef: float, l2_coef: float) -> np.ndarray:
         """
         Подсчитывает elasticnet регуляризацию
 
@@ -159,9 +194,9 @@ class MyLogReg:
         np.ndarray
             Градиент elasticnet регуляризации
         """
-        l1_reg =  l1_coef * np.sign(weights)
-        l2_reg = l2_coef * 2 * weights
-        return l1_reg + l2_reg
+        reg = np.zeros_like(weights)
+        reg[1:] = l1_coef * np.sign(weights[1:]) + l2_coef * 2 * weights[1:]
+        return reg
 
     # --------------------Метрики--------------------
     @staticmethod
@@ -181,7 +216,7 @@ class MyLogReg:
 
         Показывает общую эффективность модели (неэффективная оценка)
         """
-        accuracy = np.mean(y_true == y_prediction)
+        accuracy = float(np.mean(y_true == y_prediction))
 
         return accuracy
 
@@ -206,6 +241,9 @@ class MyLogReg:
         TP = np.sum((y_prediction == 1) & (y_true == 1))
         FP = np.sum((y_prediction == 1) & (y_true == 0))
 
+        if (TP + FP) == 0:
+            return 0
+
         return TP / (TP + FP)
 
     @staticmethod
@@ -227,6 +265,9 @@ class MyLogReg:
         """
         TP = np.sum((y_prediction == 1) & (y_true == 1))
         FN = np.sum((y_prediction == 0) & (y_true == 1))
+
+        if (TP + FN) == 0:
+            return 0
 
         return TP / (TP + FN)
 
@@ -259,6 +300,10 @@ class MyLogReg:
 
         precision = TP / (TP + FP)
         recall = TP / (TP + FN)
+
+        if (precision + recall) == 0:
+            return 0
+
         f1 = 2 * ((precision * recall) / (precision + recall))
 
         return f1
@@ -306,6 +351,42 @@ class MyLogReg:
 
         return round(roc_auc, 10)
 
+    @staticmethod
+    def _get_batches(X_matrix, y_vector, batch_size):
+        """
+        Разбивает исходные наборы данных на мини-батчи
+        (При указании sgd_sample)
+
+        Параметры:
+        X_matrix: np.array
+            Исходная матрица парметров
+        y_vector: np.array
+            Исходный вектрор искомых значений
+        batch_size : int, float
+            Размер батча в числе или процентах
+
+        Возвращает:
+        X_batch: np.array
+            Матрица с указанным кол-ом случайно выбранных наборов параметров
+        y_batch: np.array
+            Вектор с указанным кол-ом случайно выбранных искомых значений
+
+        Строятся новые матрица и вектор
+        Для обучения модели не на всех данных
+        А на небольших выборках
+        """
+        if batch_size is None or batch_size < 0 or batch_size > X_matrix.shape[0]:
+            return X_matrix, y_vector
+        if type(batch_size) is float:
+            batch_size = int(batch_size * X_matrix.shape[0])
+
+        indices = np.random.choice(len(X_matrix), batch_size, replace=False)
+        X_batch = X_matrix[indices]
+        y_batch = y_vector[indices]
+
+        return X_batch, y_batch
+
+
     # --------------------Обучение модели--------------------#
     def fit(self, X: pd.DataFrame, y: pd.Series, verbose=False):
         """
@@ -319,33 +400,42 @@ class MyLogReg:
 
         Добавляет к признакам bias
         И находит веса путем логистической регрессии
-        По обновленным весам считается новый y_prediction_proba_updated
-        На основе y_prediction_proba_updated считается метрика (если была указана)
+        Если указан sgd_sample обучение происходит на мини-батчах
+        Считаются предсказания и на их основе считается logloss
+        После обновляются веса
+        Считается и выводится метрика (если была указана)
+        На основе полного набора параметров
         """
         X_copy = X.copy()
         X_copy.insert(0, "bias", 1)
 
-        self.weights = np.ones(X_copy.shape[1])
+        self.weights = np.zeros(X_copy.shape[1])
 
         X_matrix = X_copy.values
         y_vector = y.values
         metric = None
         exp = 1e-15
 
+        np.random.seed(self.random_state)
+
         for i in range(1, self.n_iter + 1):
 
-            y_prediction_proba = 1 / (1 + np.exp(-np.dot(X_matrix, self.weights)))
+            X_batch, y_batch = self._get_batches(X_matrix, y_vector, self.sgd_sample)
 
-            log_loss = -np.mean(y_vector * np.log(y_prediction_proba + exp) + (1 - y_vector) * np.log(1 - y_prediction_proba + exp))
+            y_prediction_proba = 1 / (1 + np.exp(-np.dot(X_batch, self.weights)))
 
-            self.__update_weights(X_matrix, y_vector, y_prediction_proba)
-            y_prediction_proba_updated = 1 / (1 + np.exp(-np.dot(X_matrix, self.weights)))
+            log_loss = self._log_loss(y_prediction_proba, y_batch, exp)
+
+            self._update_weights(X_batch, y_batch, y_prediction_proba, i)
+
+            y_full_prediction = 1 / (1 + np.exp(-np.dot(X_matrix, self.weights)))
+            self.log_loss = self._log_loss(y_full_prediction, y_vector, exp)
 
             if self.metric is not None:
                 if self.metric == "roc_auc":
-                    metric = self._roc_auc(y_vector, y_prediction_proba_updated)
+                    metric = self._roc_auc(y_vector, y_full_prediction)
                 else:
-                    y_predict = np.where(y_prediction_proba_updated > 0.5, 1, 0)
+                    y_predict = np.where(y_full_prediction > 0.5, 1, 0)
                     metric = getattr(self, "_" + self.metric)(y_vector, y_predict)
 
                 self.last_metric = metric
@@ -355,6 +445,8 @@ class MyLogReg:
                     print(f"inter: {i}| loss: {log_loss} | metric: {metric}")
                 else:
                     print(f"inter: {i}| loss: {log_loss}")
+
+        return self
 
     # --------------------Предсказания--------------------#
     def predict(self, X: pd.DataFrame) -> np.ndarray:
